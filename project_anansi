@@ -1,0 +1,140 @@
+import urllib.request
+import urllib.response
+import urllib.parse
+import bs4
+import re
+import time
+from collections import defaultdict
+import json
+import requests
+import os
+
+
+def createProjectFolder():
+    folder_location = r'E:\psu_files'
+    if not os.path.exists(folder_location):
+        os.mkdir(folder_location)
+
+
+def createUrlList(url, page_num): #creates a url link for every page of the psu website
+    url_index = []  # container for the url's
+    for i in range(1, page_num):
+        url_index.append(url + str(i)) # creates a link for every page and stores it into a list
+
+    return url_index
+
+def getReponse(url): # gets a response for each url
+
+    response = urllib.request.urlopen(url)
+    time.sleep(10)  # delays the program 10 secs so it doesn't get blocked
+    response = response.read()
+    return response
+
+def getLink(response, domain): # extracts the catalog links from each page
+    links = []
+    soup = bs4.BeautifulSoup(response, features='lxml')
+    for link in soup.find_all("a", attrs={'href': re.compile("^/catalog/")}): # grabs the link using regular expression
+        catalog = link.get('href')
+        links.append(domain + str(catalog)) # creates a full url for the program to follow
+    return links
+
+def parseMetadata(link, id): # grabs all the metadata for each paper
+    psu_papers = defaultdict(dict) # a nested dict for all the information to be stored
+
+    response = urllib.request.urlopen(link) #opens each link to be parsed
+    response = response.read()
+    time.sleep(5) # delays the program
+    link_soup = bs4.BeautifulSoup(response, features='lxml')
+
+    title = link_soup.find('h1', attrs={"itemprop": "name"}) # parsing the metadata
+    author = link_soup.find('dd', class_="blacklight-author_name_tesi")
+    program = link_soup.find('dd', class_="blacklight-program_name_ssi")
+    degree = link_soup.find('dd', class_="blacklight-degree_description_ssi")
+    doc_type = link_soup.find('dd', class_="blacklight-degree_type_ssi")
+    date = link_soup.find('dd', class_="blacklight-defended_at_dtsi")
+    members = link_soup.find('dd', class_="blacklight-committee_member_and_role_tesim")
+    keywords = link_soup.find('dd', class_="blacklight-keyword_ssim")
+    abstract = link_soup.find('dd', class_="blacklight-abstract_tesi")
+    psu_papers[id]['id'] = str(id)  # storing the metadata
+    psu_papers[id]['title'] = title.getText().strip('\n')
+    psu_papers[id]['author'] = author.getText().strip('\n')
+    psu_papers[id]['program']= program.getText().strip('\n')
+    psu_papers[id]['degree'] = degree.getText().strip('\n')
+    psu_papers[id]['doc_type'] = doc_type.getText().strip('\n')
+    psu_papers[id]['date'] = date.getText().strip('\n')
+    psu_papers[id]['members'] = members.getText().strip('\n')
+    psu_papers[id]['keywords'] = keywords.getText().strip('\n')
+    psu_papers[id]['abstract'] = abstract.getText().strip('\n')
+    psu_papers[id]['link'] = link
+
+    return psu_papers
+
+def writePDF(pdf_file_name, pdf_link):
+
+    f = open(pdf_file_name, 'wb')
+    f.write(requests.get(pdf_link, allow_redirects=True).content)
+    f.close()
+
+
+def extractPDF(link, domain, id):  # extracting the pdf from website this function is giving me trouble
+    psu_pdf = defaultdict(dict)  # nested dict for the pdf info
+
+    response = urllib.request.urlopen(link)
+    response = response.read()
+    link_soup = bs4.BeautifulSoup(response, features='lxml')
+    pdf_link = link_soup.find("a", attrs={'href': re.compile("^/files/")})  # grabs the link for the pdf
+
+    pdf_name = "psu_pdf_" + str(id) + ".pdf"  # creates the pdf with unique ID
+
+
+    if pdf_link != None:  # check if beautifulsoup grabbed nothing
+        pdf = domain + pdf_link['href']# creates url
+        print(pdf)
+        urllib.request.urlretrieve(pdf, pdf_name)# this is where the problem is. It should download the pdf to the file name created
+        psu_pdf[id]["id"] = str(id) # stores info on pdf
+        psu_pdf[id]["PDF_filename"] = pdf_name
+        psu_pdf[id]["PDF_link"] = pdf
+
+    else:
+        psu_pdf[id]["id"] = str(id)
+        psu_pdf[id]["PDF_filename"] = pdf_name
+        psu_pdf[id]["PDF_link"] = "NaN" # if bs4 grabbed nothing it gives this answer to know data is missing
+
+
+    return psu_pdf
+
+
+def writeFile(metadata, pdf):  # writes to json file
+    createProjectFolder()
+    with open ('metadata.txt', 'w') as output_file:
+        json.dump(metadata, output_file)
+        json.dump(pdf, output_file)
+
+
+def getWebsite(url, page_num, domain):  # all the functions under the same roof
+    url_list = []
+    links_list = []
+    metadata = defaultdict(dict)
+    pdf_data = defaultdict(dict)
+
+    id = 1
+    url_list = createUrlList(url,page_num)
+    for item in url_list:
+        response = getReponse(item)
+        links_list = getLink(response,domain)
+        for link in links_list:
+            metadata[id] = parseMetadata(link, id)
+            pdf_data[id] = extractPDF(link, domain, id)
+            id = id + 1
+    writeFile(metadata,pdf_data)
+
+
+
+
+if __name__ == '__main__':  # execution of program
+    domain = "https://etda.libraries.psu.edu" # the base domain
+    url = "https://etda.libraries.psu.edu/catalog?page="  # the url without the page number
+    page_num = 1567 # number of pages you want to scrape
+    getWebsite(url, page_num, domain) # program
+
+
